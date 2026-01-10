@@ -23,6 +23,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   late Player player;
   late VideoController controller;
   BoxFit _videoFit = BoxFit.contain;
+  bool _isMirrored = false;
+  bool _isNightMode = false;
 
   StreamSubscription? _posSubscription;
   StreamSubscription? _videoStateSubscription;
@@ -156,6 +158,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     });
   }
 
+  void _toggleMirror() {
+    setState(() {
+      _isMirrored = !_isMirrored;
+    });
+  }
+
+  void _toggleNightMode() {
+    setState(() {
+      _isNightMode = !_isNightMode;
+    });
+  }
+
   // Skip to next video
   void _skipNext() {
     if (_currentIndex < widget.playlist.length - 1) {
@@ -234,19 +248,34 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           statusBarIconBrightness: Brightness.light,
         ),
         child: Center(
-          child: Video(
-            controller: controller,
-            fit: _videoFit,
-            controls: (state) {
-              return CustomControls(
-                state: state,
-                title: _currentAsset.title ?? 'Video',
-                onAspectRatioToggle: _cycleAspectRatio,
-                currentFit: _videoFit,
-                onSkipNext: _canSkipNext ? _skipNext : null,
-                onSkipPrevious: _canSkipPrevious ? _skipPrevious : null,
-              );
-            },
+          child: ColorFiltered(
+            colorFilter: _isNightMode
+                ? const ColorFilter.matrix([0.9, 0, 0, 0, 0, 0, 0.7, 0, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 0, 1, 0])
+                : const ColorFilter.mode(Colors.transparent, BlendMode.dst),
+            child: Transform.flip(
+              flipX: _isMirrored,
+              child: Video(
+                controller: controller,
+                fit: _videoFit,
+                controls: (state) {
+                  return Transform.flip(
+                    flipX: _isMirrored,
+                    child: CustomControls(
+                      state: state,
+                      title: _currentAsset.title ?? 'Video',
+                      onAspectRatioToggle: _cycleAspectRatio,
+                      currentFit: _videoFit,
+                      onSkipNext: _canSkipNext ? _skipNext : null,
+                      onSkipPrevious: _canSkipPrevious ? _skipPrevious : null,
+                      isMirrored: _isMirrored,
+                      onMirrorToggle: _toggleMirror,
+                      isNightMode: _isNightMode,
+                      onNightModeToggle: _toggleNightMode,
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ),

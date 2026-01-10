@@ -17,6 +17,10 @@ class CustomControls extends StatefulWidget {
   final BoxFit currentFit;
   final VoidCallback? onSkipNext;
   final VoidCallback? onSkipPrevious;
+  final bool isMirrored;
+  final VoidCallback onMirrorToggle;
+  final bool isNightMode;
+  final VoidCallback onNightModeToggle;
 
   const CustomControls({
     super.key,
@@ -26,6 +30,10 @@ class CustomControls extends StatefulWidget {
     required this.currentFit,
     this.onSkipNext,
     this.onSkipPrevious,
+    required this.isMirrored,
+    required this.onMirrorToggle,
+    required this.isNightMode,
+    required this.onNightModeToggle,
   });
 
   @override
@@ -42,8 +50,6 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
   double _playbackSpeed = 1.0;
   Timer? _sleepTimer;
   int _sleepMinutes = 0;
-  bool _nightMode = false;
-  bool _mirrored = false;
   bool _isMuted = false;
   bool _backgroundPlay = false;
   int _repeatMode = 0; // 0=off, 1=one, 2=all
@@ -143,14 +149,16 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
 
   // Night Mode
   void _toggleNightMode() {
-    setState(() => _nightMode = !_nightMode);
-    _showSnack(_nightMode ? 'Night mode ON' : 'Night mode OFF');
+    final willBeNight = !widget.isNightMode;
+    widget.onNightModeToggle();
+    _showSnack(willBeNight ? 'Night mode ON' : 'Night mode OFF');
   }
 
   // Mirror
   void _toggleMirror() {
-    setState(() => _mirrored = !_mirrored);
-    _showSnack(_mirrored ? 'Mirrored' : 'Normal');
+    final willBeMirrored = !widget.isMirrored;
+    widget.onMirrorToggle();
+    _showSnack(willBeMirrored ? 'Mirrored' : 'Normal');
   }
 
   // Mute
@@ -171,8 +179,21 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
     setState(() {
       _repeatMode = (_repeatMode + 1) % 3;
     });
-    String msg = ['Repeat Off', 'Repeat One', 'Repeat All'][_repeatMode];
-    _showSnack(msg);
+
+    switch (_repeatMode) {
+      case 0:
+        player.setPlaylistMode(PlaylistMode.none);
+        _showSnack('Repeat Off');
+        break;
+      case 1:
+        player.setPlaylistMode(PlaylistMode.single);
+        _showSnack('Repeat One');
+        break;
+      case 2:
+        player.setPlaylistMode(PlaylistMode.loop);
+        _showSnack('Repeat All');
+        break;
+    }
   }
 
   // AB Repeat
@@ -314,21 +335,7 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
 
   @override
   Widget build(BuildContext context) {
-    // Night mode overlay
-    Widget content = _buildContent();
-    if (_nightMode) {
-      content = ColorFiltered(
-        colorFilter: const ColorFilter.matrix([0.9, 0, 0, 0, 0, 0, 0.7, 0, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 0, 1, 0]),
-        child: content,
-      );
-    }
-
-    // Mirror
-    if (_mirrored) {
-      content = Transform.flip(flipX: true, child: content);
-    }
-
-    return content;
+    return _buildContent();
   }
 
   Widget _buildContent() {
@@ -340,10 +347,7 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
           child: AnimatedOpacity(
             opacity: _visible ? 1 : 0,
             duration: const Duration(milliseconds: 300),
-            child: Align(
-              alignment: Alignment.bottomLeft,
-              child: Padding(padding: const EdgeInsets.all(24), child: _buildGlassButton(Icons.lock_open, _toggleLock)),
-            ),
+            child: Align(alignment: Alignment.center, child: _buildLockOverlay()),
           ),
         ),
       );
@@ -351,51 +355,69 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
 
     return Stack(
       children: [
-        GestureOverlay(onTap: _toggleVisibility, onDoubleTap: player.playOrPause),
+        GestureOverlay(
+          onTap: _toggleVisibility,
+          onDoubleTapSeek: (forward) => forward ? _skip10Forward() : _skip10Backward(),
+          onDoubleTapCenter: player.playOrPause,
+        ),
         if (_visible)
           FadeTransition(
             opacity: _fadeAnimation,
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.black.withValues(alpha: 0.7),
-                    Colors.transparent,
-                    Colors.transparent,
-                    Colors.black.withValues(alpha: 0.8),
-                  ],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  stops: const [0.0, 0.2, 0.7, 1.0],
-                ),
-              ),
-              child: Column(
-                children: [
-                  _buildTopBar(),
-                  _buildSecondRow(),
-                  const Spacer(),
-                  _buildSeekBar(),
-                  _buildBottomControls(),
-                  const SizedBox(height: 12),
-                ],
-              ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.black.withValues(alpha: 0.8),
+                        Colors.transparent,
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.9),
+                      ],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: const [0.0, 0.25, 0.7, 1.0],
+                    ),
+                  ),
+                  child: Center(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: SizedBox(
+                        width: constraints.maxWidth,
+                        height: _expanded ? 600 : (constraints.maxHeight < 450 ? 450 : constraints.maxHeight),
+                        child: Column(
+                          children: [
+                            _buildTopBar(),
+                            const SizedBox(height: 12),
+                            _buildSecondRow(),
+                            const Spacer(),
+                            _buildSeekBar(),
+                            _buildBottomControls(),
+                            const SizedBox(height: 20),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
       ],
     );
   }
 
-  Widget _buildGlassButton(IconData icon, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [vxPrimary.withValues(alpha: 0.3), vxSecondary.withValues(alpha: 0.3)]),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Icon(icon, color: Colors.white),
+  Widget _buildLockOverlay() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.black45,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white24),
+      ),
+      child: IconButton(
+        icon: const Icon(Icons.lock_outline, color: Colors.white, size: 40),
+        onPressed: _toggleLock,
       ),
     );
   }
@@ -404,35 +426,49 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
     return SafeArea(
       bottom: false,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         child: Row(
           children: [
-            _buildIconBtn(Icons.arrow_back, () => Navigator.pop(context)),
-            const SizedBox(width: 8),
+            _buildIconBtn(Icons.arrow_back_ios_new, () => Navigator.pop(context), size: 22),
+            const SizedBox(width: 12),
             Expanded(
               child: Text(
                 widget.title,
-                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                  shadows: [Shadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))],
+                ),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            _buildIconBtn(Icons.hd_outlined, () {}),
-            _buildIconBtn(Icons.closed_caption_outlined, () => _showSnack('Subtitles coming soon')),
-            _buildIconBtn(Icons.playlist_play, () => _showSnack('Playlist coming soon')),
-            _buildIconBtn(Icons.more_vert, () {}),
+            _buildIconBtn(Icons.high_quality, () {}),
+            _buildIconBtn(Icons.closed_caption, () => _showSnack('Subtitles coming soon')),
+            _buildIconBtn(Icons.playlist_play_rounded, () => _showSnack('Playlist coming soon')),
+            _buildIconBtn(Icons.more_horiz, () {}),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildIconBtn(IconData icon, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Icon(icon, color: Colors.white, size: 24),
+  Widget _buildIconBtn(IconData icon, VoidCallback onTap, {double size = 26}) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Icon(
+            icon,
+            color: Colors.white,
+            size: size,
+            shadows: const [Shadow(color: Colors.black54, blurRadius: 6, offset: Offset(0, 2))],
+          ),
+        ),
       ),
     );
   }
@@ -440,37 +476,37 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
   // Expandable Second Row
   Widget _buildSecondRow() {
     final row1 = [
-      _ControlItem(Icons.nights_stay, 'Night', _nightMode, _toggleNightMode),
+      _ControlItem(Icons.nights_stay_rounded, 'Night', widget.isNightMode, _toggleNightMode),
       _ControlItem(
-        Icons.repeat,
+        Icons.repeat_rounded,
         'Repeat',
         _repeatMode > 0,
         _cycleRepeatMode,
         badge: _repeatMode == 1 ? '1' : (_repeatMode == 2 ? 'A' : null),
       ),
-      _ControlItem(Icons.picture_in_picture, 'Popup', false, _showPopupPlayer),
-      _ControlItem(Icons.equalizer, 'EQ', false, _showEqualizer),
-      _ControlItem(Icons.flip, 'Mirror', _mirrored, _toggleMirror),
+      _ControlItem(Icons.picture_in_picture_rounded, 'Popup', false, _showPopupPlayer),
+      _ControlItem(Icons.equalizer_rounded, 'EQ', false, _showEqualizer),
+      _ControlItem(Icons.flip_rounded, 'Mirror', widget.isMirrored, _toggleMirror),
     ];
 
     final row2 = [
-      _ControlItem(Icons.screen_rotation, 'Rotate', false, _toggleLandscape),
-      _ControlItem(Icons.lock_outline, 'Lock', _locked, _toggleLock),
-      _ControlItem(Icons.volume_off, 'Mute', _isMuted, _toggleMute),
-      _ControlItem(Icons.play_circle_outline, 'BG Play', _backgroundPlay, _toggleBackgroundPlay),
-      _ControlItem(Icons.speed, '${_playbackSpeed}x', _playbackSpeed != 1.0, _showSpeedSelector),
+      _ControlItem(Icons.screen_rotation_rounded, 'Rotate', false, _toggleLandscape),
+      _ControlItem(Icons.lock_rounded, 'Lock', _locked, _toggleLock),
+      _ControlItem(Icons.volume_off_rounded, 'Mute', _isMuted, _toggleMute),
+      _ControlItem(Icons.play_circle_fill_rounded, 'BG Play', _backgroundPlay, _toggleBackgroundPlay),
+      _ControlItem(Icons.speed_rounded, '${_playbackSpeed}x', _playbackSpeed != 1.0, _showSpeedSelector),
     ];
 
     final row3 = [
       _ControlItem(
-        Icons.compare_arrows,
+        Icons.compare_arrows_rounded,
         'A-B',
         _abRepeatActive,
         _handleABRepeat,
         badge: _pointA != null && _pointB == null ? 'A' : null,
       ),
       _ControlItem(
-        Icons.bedtime,
+        Icons.timer_rounded,
         'Sleep',
         _sleepMinutes > 0,
         _showSleepTimer,
@@ -482,48 +518,52 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
       children: [
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
+            children: [...row1.map((item) => _buildControlChip(item)), const SizedBox(width: 4), _buildExpandToggle()],
+          ),
+        ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox.shrink(),
+          secondChild: Column(
             children: [
-              ...row1.map((item) => _buildControlChip(item)),
-              GestureDetector(
-                onTap: _toggleExpand,
-                child: Container(
-                  margin: const EdgeInsets.all(4),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(_expanded ? Icons.expand_less : Icons.expand_more, color: Colors.white, size: 22),
-                ),
+              const SizedBox(height: 12),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(children: row2.map((item) => _buildControlChip(item)).toList()),
+              ),
+              const SizedBox(height: 12),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(children: row3.map((item) => _buildControlChip(item)).toList()),
               ),
             ],
           ),
-        ),
-        AnimatedSize(
+          crossFadeState: _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
           duration: const Duration(milliseconds: 300),
-          curve: Curves.easeInOut,
-          child: _expanded
-              ? Column(
-                  children: [
-                    const SizedBox(height: 8),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Row(children: row2.map((item) => _buildControlChip(item)).toList()),
-                    ),
-                    const SizedBox(height: 8),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Row(children: row3.map((item) => _buildControlChip(item)).toList()),
-                    ),
-                  ],
-                )
-              : const SizedBox.shrink(),
         ),
       ],
+    );
+  }
+
+  Widget _buildExpandToggle() {
+    return GestureDetector(
+      onTap: _toggleExpand,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: _expanded ? vxPrimary.withOpacity(0.2) : Colors.white10,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _expanded ? vxPrimary.withOpacity(0.5) : Colors.white12),
+        ),
+        child: Icon(_expanded ? Icons.expand_less : Icons.expand_more, color: Colors.white, size: 22),
+      ),
     );
   }
 
@@ -531,35 +571,55 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
     return GestureDetector(
       onTap: item.onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.all(4),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        duration: const Duration(milliseconds: 250),
+        margin: const EdgeInsets.only(right: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           gradient: item.isActive ? const LinearGradient(colors: [vxPrimary, vxSecondary]) : null,
-          color: !item.isActive ? Colors.white.withValues(alpha: 0.15) : null,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: item.isActive ? Colors.transparent : Colors.white24),
+          color: !item.isActive ? Colors.white.withOpacity(0.1) : null,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: item.isActive ? Colors.white24 : Colors.white10, width: 1),
+          boxShadow: item.isActive
+              ? [BoxShadow(color: vxPrimary.withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 4))]
+              : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Stack(
+              clipBehavior: Clip.none,
               children: [
-                Icon(item.icon, color: Colors.white, size: 18),
+                Icon(
+                  item.icon,
+                  color: Colors.white,
+                  size: 24,
+                  shadows: const [Shadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))],
+                ),
                 if (item.badge != null)
                   Positioned(
-                    right: -2,
-                    top: -2,
+                    right: -6,
+                    top: -6,
                     child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                      child: Text(item.badge!, style: const TextStyle(color: Colors.white, fontSize: 8)),
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle),
+                      child: Text(
+                        item.badge!,
+                        style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold),
+                      ),
                     ),
                   ),
               ],
             ),
-            const SizedBox(width: 6),
-            Text(item.label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+            const SizedBox(width: 12),
+            Text(
+              item.label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                shadows: [Shadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))],
+              ),
+            ),
           ],
         ),
       ),
@@ -568,7 +628,7 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
 
   Widget _buildSeekBar() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       child: StreamBuilder<Duration>(
         stream: player.stream.position,
         builder: (context, snapshot) {
@@ -581,46 +641,43 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
                 children: [
                   Text(
                     FormatUtils.formatDuration(pos.inSeconds),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      shadows: const [Shadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 1))],
+                    ),
                   ),
                   const Spacer(),
-                  if (_abRepeatActive)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(colors: [vxPrimary, vxSecondary]),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Text(
-                        'A-B',
-                        style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  if (_sleepMinutes > 0)
-                    Container(
-                      margin: const EdgeInsets.only(left: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(colors: [vxPrimary, vxSecondary]),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text('${_sleepMinutes}m', style: const TextStyle(color: Colors.white, fontSize: 10)),
+                  if (_abRepeatActive || _sleepMinutes > 0)
+                    Row(
+                      children: [
+                        if (_abRepeatActive) _buildMiniBadge('A-B'),
+                        if (_sleepMinutes > 0) ...[const SizedBox(width: 8), _buildMiniBadge('${_sleepMinutes}m')],
+                      ],
                     ),
                   const Spacer(),
                   Text(
                     FormatUtils.formatDuration(dur.inSeconds),
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      shadows: const [Shadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 1))],
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 2),
               SliderTheme(
                 data: SliderThemeData(
-                  trackHeight: 4,
-                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+                  trackHeight: 2,
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6, pressedElevation: 8),
+                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
                   activeTrackColor: vxPrimary,
-                  inactiveTrackColor: Colors.white24,
+                  inactiveTrackColor: Colors.white12,
                   thumbColor: Colors.white,
+                  trackShape: const RoundedRectSliderTrackShape(),
                 ),
                 child: Slider(
                   value: pos.inSeconds.toDouble().clamp(0, maxDur),
@@ -638,26 +695,41 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
     );
   }
 
+  Widget _buildMiniBadge(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(colors: [vxPrimary, vxSecondary]),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          shadows: [Shadow(color: Colors.black45, blurRadius: 2, offset: Offset(0, 1))],
+        ),
+      ),
+    );
+  }
+
   Widget _buildBottomControls() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _buildControlBtn(Icons.lock_outline, _toggleLock),
-          _buildControlBtn(Icons.replay_10, _skip10Backward, size: 30),
-          _buildControlBtn(
-            Icons.skip_previous,
-            widget.onSkipPrevious,
-            size: 34,
-            enabled: widget.onSkipPrevious != null,
-          ),
+          _buildIconBtn(Icons.screen_lock_rotation, _toggleLock, size: 24),
+          _buildIconBtn(Icons.replay_10_rounded, _skip10Backward, size: 32),
+          _buildIconBtn(Icons.skip_previous_rounded, widget.onSkipPrevious ?? () {}, size: 40),
           _buildPlayPauseBtn(),
-          _buildControlBtn(Icons.skip_next, widget.onSkipNext, size: 34, enabled: widget.onSkipNext != null),
-          _buildControlBtn(Icons.forward_10, _skip10Forward, size: 30),
-          _buildControlBtn(
-            widget.currentFit == BoxFit.contain ? Icons.fullscreen : Icons.fullscreen_exit,
+          _buildIconBtn(Icons.skip_next_rounded, widget.onSkipNext ?? () {}, size: 40),
+          _buildIconBtn(Icons.forward_10_rounded, _skip10Forward, size: 32),
+          _buildIconBtn(
+            widget.currentFit == BoxFit.contain ? Icons.fullscreen_rounded : Icons.fullscreen_exit_rounded,
             widget.onAspectRatioToggle,
+            size: 28,
           ),
         ],
       ),
@@ -671,38 +743,50 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
         final playing = snapshot.data ?? false;
         return GestureDetector(
           onTap: player.playOrPause,
-          child: Container(
-            padding: const EdgeInsets.all(14),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [vxPrimary, vxSecondary]),
+              gradient: const LinearGradient(
+                colors: [vxPrimary, vxSecondary],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
               shape: BoxShape.circle,
-              boxShadow: [BoxShadow(color: vxPrimary.withValues(alpha: 0.5), blurRadius: 20, spreadRadius: 2)],
+              boxShadow: [
+                BoxShadow(
+                  color: vxPrimary.withOpacity(0.4),
+                  blurRadius: 20,
+                  spreadRadius: 2,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            child: Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, color: Colors.white, size: 40),
+            child: Icon(
+              playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 44,
+              shadows: const [Shadow(color: Colors.black54, blurRadius: 8, offset: Offset(0, 2))],
+            ),
           ),
         );
       },
     );
   }
 
-  Widget _buildControlBtn(IconData icon, VoidCallback? onTap, {double size = 26, bool enabled = true}) {
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      borderRadius: BorderRadius.circular(24),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Icon(icon, color: enabled ? Colors.white : Colors.white38, size: size),
-      ),
-    );
-  }
-
   void _showSnack(String msg) {
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg),
-        backgroundColor: const Color(0xFF1a1a2e),
+        content: Text(
+          msg,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+        ),
+        backgroundColor: Colors.black87,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(20),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
