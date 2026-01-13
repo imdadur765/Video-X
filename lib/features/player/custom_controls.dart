@@ -114,7 +114,11 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
     _fadeController.forward();
     _startHideTimer();
     _setupABRepeat();
+
+    // 🎭 Subtitle Synchronization
     _fetchSubtitles();
+    player.stream.tracks.listen((_) => _fetchSubtitles());
+    player.stream.track.listen((_) => _fetchSubtitles());
 
     if (widget.resumePosition != null) {
       _showResumeNotification = true;
@@ -389,20 +393,34 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
 
   Widget _buildSubtitleOverlay() {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        _buildPillButton('Add Subtitle File', false, _pickSubtitleFile, isDestructive: false),
+        _buildPillButton('Upload External File', false, _pickSubtitleFile, isDestructive: false),
         const SizedBox(height: 16),
-        ...List.generate(_subtitleTracks.length, (index) {
-          final track = _subtitleTracks[index];
-          final isSelected = _selectedSubtitle == track;
-          return Padding(padding: const EdgeInsets.only(bottom: 8.0), child: _buildSubtitleItem(track, isSelected));
-        }),
+        // 📜 Scrollable Track List
+        Flexible(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 250),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                _buildSubtitleItem(SubtitleTrack.no(), _selectedSubtitle.id == 'no' || _selectedSubtitle.id == 'none'),
+                ..._subtitleTracks.map((track) {
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: _buildSubtitleItem(track, _selectedSubtitle == track),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildSubtitleItem(SubtitleTrack track, bool isSelected) {
-    String label = track.title ?? track.language ?? 'Track ${track.id}';
+    String label = track.title ?? track.language ?? (track.id == 'no' ? 'None' : 'Track ${track.id}');
     if (track.id == 'no') label = 'None';
 
     return GestureDetector(
@@ -542,6 +560,14 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
                                 '${_playbackSpeed}x',
                                 Icons.speed_rounded,
                                 _showSpeedSelector,
+                              ),
+                              _buildMoreItem(
+                                'Subtitles (CC)',
+                                _selectedSubtitle.id == 'no' || _selectedSubtitle.id == 'none'
+                                    ? 'Off'
+                                    : (_selectedSubtitle.title ?? 'On'),
+                                Icons.closed_caption_rounded,
+                                () => setState(() => _activeOverlay = PlayerOverlay.subtitles),
                               ),
                             ],
                           ),

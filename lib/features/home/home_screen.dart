@@ -1,4 +1,4 @@
-import 'dart:ui';
+import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -150,11 +150,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         centerTitle: true,
         titlePadding: const EdgeInsets.only(bottom: 25),
         title: Text(
-          'VISION X',
-          style: GoogleFonts.audiowide(
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 4.0,
+          _getPageTitle(),
+          style: GoogleFonts.orbitron(
+            fontSize: 20,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 5.0,
             color: Colors.white,
             shadows: [Shadow(color: Theme.of(context).primaryColor.withValues(alpha: 0.8), blurRadius: 20)],
           ),
@@ -168,7 +168,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             final stopShift = 0.1 * math.cos(t * 2 * math.pi);
 
             return ImageFiltered(
-              imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40), // Ultra-soft blur
+              imageFilter: ui.ImageFilter.blur(sigmaX: 40, sigmaY: 40), // Ultra-soft blur
               child: Container(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -201,6 +201,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // Removed _getTitle and _buildPopupMenuItem as they are no longer used by the minimalist header
+
+  String _getPageTitle() {
+    switch (_selectedIndex) {
+      case 0:
+        return 'VISION X';
+      case 1:
+        return 'ALL VIDEOS';
+      case 2:
+        return 'EXPLORE';
+      case 3:
+        return 'FOLDERS';
+      case 4:
+        return 'PROFILE';
+      default:
+        return 'VISION X';
+    }
+  }
 
   // 📜 Handle scroll to hide/show navbar
   bool _handleScrollNotification(ScrollNotification notification) {
@@ -247,7 +264,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ClipRRect(
                 borderRadius: BorderRadius.circular(28),
                 child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
                   child: Container(
                     height: 65,
                     decoration: BoxDecoration(
@@ -420,15 +437,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       padding: const EdgeInsets.symmetric(vertical: 20),
       children: [
         _buildHeroSection(),
-        const SizedBox(height: 25),
-        _buildSectionTitle('Quick Tools'),
-        _buildQuickTools(),
-        const SizedBox(height: 25),
+        const SizedBox(height: 30),
+        _buildSectionTitle('Library Insights'),
+        _buildLibraryInsights(),
+        const SizedBox(height: 30),
         _buildSectionTitle('Recently Added', onSeeAll: () => setState(() => _selectedIndex = 1)),
         _buildHorizontalVideoList(),
-        const SizedBox(height: 25),
+        const SizedBox(height: 30),
         _buildSectionTitle('Folders', onSeeAll: () => setState(() => _selectedIndex = 3)),
         _buildHorizontalFolderList(),
+        const SizedBox(height: 30),
+        _buildSectionTitle('Quick Access'),
+        _buildQuickTools(),
         const SizedBox(height: 100), // Space for navbar
       ],
     );
@@ -442,12 +462,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         children: [
           Text(
             title,
-            style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+            style: GoogleFonts.outfit(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              letterSpacing: 0.5,
+            ),
           ),
           if (onSeeAll != null)
-            TextButton(
-              onPressed: onSeeAll,
-              child: Text('See All', style: GoogleFonts.outfit(color: Theme.of(context).primaryColor, fontSize: 13)),
+            GestureDetector(
+              onTap: onSeeAll,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'See All',
+                      style: GoogleFonts.outfit(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 10),
+                  ],
+                ),
+              ),
             ),
         ],
       ),
@@ -495,7 +538,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             Image(image: AssetEntityImageProvider(_lastPlayedVideo!, isOriginal: false), fit: BoxFit.cover),
             // Glass Overlay
             BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+              filter: ui.ImageFilter.blur(sigmaX: 0, sigmaY: 0),
               child: Container(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -561,39 +604,169 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildQuickTools() {
-    return SizedBox(
-      height: 100,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 15),
+  Widget _buildLibraryInsights() {
+    // Basic calculation for insights
+    int totalVideos = _videos.length;
+    double totalHours = _videos.fold(0.0, (sum, v) => sum + v.duration) / 3600;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
         children: [
-          _buildToolItem('Private', Icons.lock_outline_rounded, Colors.purpleAccent),
-          _buildToolItem('Music', Icons.music_note_rounded, Colors.orangeAccent),
-          _buildToolItem('Network', Icons.language_rounded, Colors.blueAccent),
-          _buildToolItem('Link', Icons.link_rounded, Colors.tealAccent),
-          _buildToolItem('History', Icons.history_rounded, Colors.grey),
+          Row(
+            children: [
+              // Media Stat Card
+              Expanded(
+                child: _buildInsightCard(
+                  'Media Library',
+                  '$totalVideos Videos | ${totalHours.toStringAsFixed(1)}h',
+                  Icons.auto_graph_rounded,
+                  Colors.blueAccent,
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Storage Card
+              Expanded(
+                child: _buildInsightCard(
+                  'Storage Health',
+                  'Optimized',
+                  Icons.storage_rounded,
+                  Colors.greenAccent,
+                  showProgress: true,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildToolItem(String label, IconData icon, Color color) {
+  Widget _buildInsightCard(String title, String value, IconData icon, Color color, {bool showProgress = false}) {
     return Container(
-      width: 85,
-      margin: const EdgeInsets.symmetric(horizontal: 5),
+      height: 100,
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E).withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+        color: const Color(0xFF1E1E1E).withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
       ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 28),
-          const SizedBox(height: 8),
-          Text(label, style: GoogleFonts.outfit(color: Colors.white60, fontSize: 12)),
+          Row(
+            children: [
+              Icon(icon, color: color.withValues(alpha: 0.8), size: 18),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: GoogleFonts.outfit(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Text(
+            value,
+            style: GoogleFonts.outfit(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+          ),
+          if (showProgress) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: 0.65, // Mocked value
+                backgroundColor: color.withValues(alpha: 0.1),
+                valueColor: AlwaysStoppedAnimation<Color>(color.withValues(alpha: 0.6)),
+                minHeight: 4,
+              ),
+            ),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildQuickTools() {
+    return SizedBox(
+      height: 155, // Reduced height for more compact feel
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 15),
+        children: [
+          _buildToolItem('Private', 'Privacy lock', Icons.security_rounded, Colors.purpleAccent),
+          _buildToolItem('Music', 'Hi-Fi audio', Icons.headphones_rounded, Colors.orangeAccent),
+          _buildToolItem('Network', 'Cloud link', Icons.stream_rounded, Colors.blueAccent),
+          _buildToolItem('Links', 'Instant stream', Icons.bolt_rounded, Colors.tealAccent),
+          _buildToolItem('History', 'Recent play', Icons.history_rounded, Colors.grey),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToolItem(String label, String subtitle, IconData icon, Color color) {
+    return Container(
+      width: 120,
+      margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Stack(
+          children: [
+            // 1. Frosted Glass Base
+            BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E1E1E).withValues(alpha: 0.4),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
+            ),
+            // 2. Neon Bottom Glow
+            Positioned(
+              bottom: -45,
+              left: 0,
+              right: 0,
+              child: Container(
+                height: 100,
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    colors: [color.withValues(alpha: 0.90), color.withValues(alpha: 0.25), Colors.transparent],
+                  ),
+                ),
+              ),
+            ),
+            // 3. Content
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center, // Centered!
+                children: [
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.all(10), // Larger padding
+                    decoration: BoxDecoration(color: color.withValues(alpha: 0.2), shape: BoxShape.circle),
+                    child: Icon(icon, color: color, size: 36), // Much larger!
+                  ),
+                  const Spacer(),
+                  Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.outfit(color: Colors.white54, fontSize: 9),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -646,37 +819,74 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         final folders = snapshot.data!.take(5).toList();
 
         return SizedBox(
-          height: 100,
+          height: 120, // Increased height for premium cards
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 15),
             itemCount: folders.length,
             itemBuilder: (context, index) {
               final album = folders[index];
+              final primaryColor = Theme.of(context).primaryColor;
+
               return GestureDetector(
                 onTap: () => setState(() => _selectedIndex = 3),
                 child: Container(
-                  width: 140,
-                  margin: const EdgeInsets.symmetric(horizontal: 5),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardColor.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.folder_rounded, color: Theme.of(context).primaryColor, size: 24),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          album.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                  width: 130,
+                  margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Stack(
+                      children: [
+                        // Glass Base
+                        BackdropFilter(
+                          filter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E1E1E).withValues(alpha: 0.4),
+                              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
+                        // Content
+                        Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.folder_rounded,
+                                color: primaryColor.withValues(alpha: 0.9),
+                                size: 40,
+                                shadows: [Shadow(color: primaryColor.withValues(alpha: 0.5), blurRadius: 15)],
+                              ),
+                              const Spacer(),
+                              Text(
+                                album.name,
+                                maxLines: 1,
+                                textAlign: TextAlign.center,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.outfit(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              FutureBuilder<int>(
+                                future: album.assetCountAsync,
+                                builder: (context, snapshot) {
+                                  return Text(
+                                    '${snapshot.data ?? '...'} Videos',
+                                    style: GoogleFonts.outfit(color: Colors.white38, fontSize: 9),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );
