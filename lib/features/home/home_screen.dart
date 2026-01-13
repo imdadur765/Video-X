@@ -28,14 +28,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _hasPermission = false;
   bool _isGridView = false;
 
+  // Navbar hide/show on scroll
+  bool _isNavbarVisible = true;
+  double _lastScrollPosition = 0;
+  final double _scrollThreshold = 8; // Lower = quicker show on upward scroll
+
   late AnimationController _animationController;
   late AnimationController _pulseController;
+  late AnimationController _navbarController;
 
   @override
   void initState() {
     super.initState();
     _animationController = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
-    _pulseController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
+    // Slow & Classy breathing (3 seconds)
+    _pulseController = AnimationController(vsync: this, duration: const Duration(seconds: 3))..repeat(reverse: true);
+    // Navbar hide/show animation
+    _navbarController = AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
+    _navbarController.value = 1.0; // Start visible
     _checkPermissionAndLoad();
   }
 
@@ -43,6 +53,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void dispose() {
     _animationController.dispose();
     _pulseController.dispose();
+    _navbarController.dispose();
     super.dispose();
   }
 
@@ -89,14 +100,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      extendBody: false, // User requested: "niche se video nhi dikhna chaiye" (Docked)
-      body: NestedScrollView(
-        headerSliverBuilder: (_, __) => [_buildSliverAppBar()],
-        body: !_hasPermission
-            ? _buildPermissionView()
-            : _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _buildBody(),
+      extendBody: true, // Allow navbar to float over content
+      body: NotificationListener<ScrollNotification>(
+        onNotification: _handleScrollNotification,
+        child: NestedScrollView(
+          headerSliverBuilder: (_, __) => [_buildSliverAppBar()],
+          body: !_hasPermission
+              ? _buildPermissionView()
+              : _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _buildBody(),
+        ),
       ),
       bottomNavigationBar: _buildBottomNavigationBar(),
     );
@@ -187,117 +201,159 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  // 📜 Handle scroll to hide/show navbar
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollUpdateNotification) {
+      final currentScroll = notification.metrics.pixels;
+      final delta = currentScroll - _lastScrollPosition;
+
+      // Scrolling down - hide navbar
+      if (delta > _scrollThreshold && _isNavbarVisible) {
+        _isNavbarVisible = false;
+        _navbarController.reverse();
+      }
+      // Scrolling up - show navbar
+      else if (delta < -_scrollThreshold && !_isNavbarVisible) {
+        _isNavbarVisible = true;
+        _navbarController.forward();
+      }
+
+      _lastScrollPosition = currentScroll;
+    }
+    return false;
+  }
+
   Widget _buildBottomNavigationBar() {
-    return Container(
-      color: Colors.black, // "Puri tarah black" background
-      padding: const EdgeInsets.only(top: 10), // Spacing from video area
+    final primaryColor = Theme.of(context).primaryColor;
+
+    return AnimatedBuilder(
+      animation: _navbarController,
+      builder: (context, child) {
+        return Transform.translate(
+          offset: Offset(0, 100 * (1 - _navbarController.value)),
+          child: Opacity(opacity: _navbarController.value, child: child),
+        );
+      },
+      child: Container(
+        color: Colors.transparent,
+        padding: const EdgeInsets.fromLTRB(10, 0, 10, 14),
+        child: SizedBox(
+          height: 80,
+          child: Stack(
+            alignment: Alignment.bottomCenter,
+            children: [
+              // Main Navbar (Glassmorphism)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(28),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    height: 65,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(28),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          const Color(0xFF1A1A1A).withValues(alpha: 0.95),
+                          const Color(0xFF0A0A0A).withValues(alpha: 0.98),
+                        ],
+                      ),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.08), width: 1),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        // Left side items
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              _navItem(0, Icons.home_rounded, Icons.home_outlined, 'Home'),
+                              _navItem(1, Icons.folder_rounded, Icons.folder_outlined, 'Folders'),
+                            ],
+                          ),
+                        ),
+                        // Center gap for floating button
+                        const SizedBox(width: 75),
+                        // Right side items
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              _navItem(3, Icons.history_rounded, Icons.history_outlined, 'Recent'),
+                              _navItem(4, Icons.person_rounded, Icons.person_outline_rounded, 'Profile'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              // 🔥 Floating Center Explore Button with Glow
+              Positioned(top: 0, child: _buildFloatingExploreButton(primaryColor)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 🌟 Floating Explore Button with Glow Effect
+  Widget _buildFloatingExploreButton(Color primaryColor) {
+    final isSelected = _selectedIndex == 2;
+    final glowIntensity = 0.4 + (_pulseController.value * 0.3);
+
+    return GestureDetector(
+      onTap: () => setState(() => _selectedIndex = 2),
       child: AnimatedBuilder(
         animation: _pulseController,
         builder: (context, child) {
           return Container(
-            // Docked margin
-            margin: const EdgeInsets.only(bottom: 12),
-            height: 70,
-            child: Stack(
-              alignment: Alignment.bottomCenter,
-              children: [
-                // 0. 🌟 Ambient Under-Glow
-                CustomPaint(
-                  size: const Size(double.infinity, 55),
-                  painter: NeonShadowPainter(progress: _pulseController.value, color: Theme.of(context).primaryColor),
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              // Outer glow effect
+              boxShadow: [
+                // Primary glow
+                BoxShadow(
+                  color: isSelected
+                      ? primaryColor.withValues(alpha: glowIntensity)
+                      : primaryColor.withValues(alpha: 0.2),
+                  blurRadius: isSelected ? 25 : 15,
+                  spreadRadius: isSelected ? 3 : 1,
                 ),
-
-                // 1. The Split Wings (Spotify Glass Style)
-                ClipPath(
-                  clipper: NavBarClipper(),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-                    child: Container(
-                      height: 55,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      decoration: BoxDecoration(
-                        // Dark Gradient (Opaque)
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [const Color(0xFF252525), const Color(0xFF000000)],
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                _navItem(0, Icons.home_filled, Icons.home_outlined), // Home
-                                _navItem(1, Icons.folder_rounded, Icons.folder_outlined), // Files
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 70), // Center gap
-                          Expanded(
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                _navItem(3, Icons.history_rounded, Icons.history_outlined), // Recent
-                                _navItem(4, Icons.person_rounded, Icons.person_outline_rounded), // Profile
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 1.5 💎 Subtle Glass Rim
-                IgnorePointer(
-                  child: CustomPaint(size: const Size(double.infinity, 55), painter: GlassBorderPainter()),
-                ),
-
-                // 2. The Floating Center Button
-                Positioned(
-                  top: 0,
-                  child: GestureDetector(
-                    onTap: () => setState(() => _selectedIndex = 2),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      width: 54,
-                      height: 54,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: _selectedIndex == 2
-                              ? [const Color(0xFF2962FF), const Color(0xFF00B0FF)]
-                              : [const Color(0xFF222222), const Color(0xFF111111)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _selectedIndex == 2
-                                ? const Color(0xFF2962FF).withValues(alpha: 0.6)
-                                : Colors.black.withValues(alpha: 0.4),
-                            blurRadius: _selectedIndex == 2 ? 25 : 15,
-                            spreadRadius: 1,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: _selectedIndex == 2 ? 0.3 : 0.1),
-                          width: 1.2,
-                        ),
-                      ),
-                      child: Icon(
-                        Icons.explore_rounded,
-                        color: _selectedIndex == 2 ? Colors.white : Colors.grey,
-                        size: 26,
-                      ),
-                    ),
-                  ),
-                ),
+                // Soft ambient shadow
+                BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 15, offset: const Offset(0, 6)),
               ],
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                // Gradient fill
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: isSelected
+                      ? [primaryColor, primaryColor.withValues(alpha: 0.8)]
+                      : [const Color(0xFF1A1A1A), const Color(0xFF0D0D0D)],
+                ),
+                // Stroke border with glow
+                border: Border.all(
+                  width: 2,
+                  color: isSelected ? Colors.white.withValues(alpha: 0.4) : primaryColor.withValues(alpha: 0.6),
+                ),
+              ),
+              child: Icon(Icons.explore_rounded, color: isSelected ? Colors.white : primaryColor, size: 28),
             ),
           );
         },
@@ -305,24 +361,54 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Improved Nav Item (Icon Switching for Active State)
-  Widget _navItem(int index, IconData activeIcon, IconData inactiveIcon) {
+  // � Modern Nav Item with Label & Animated Indicator
+  Widget _navItem(int index, IconData activeIcon, IconData inactiveIcon, String label) {
     final isSelected = _selectedIndex == index;
+    final primaryColor = Theme.of(context).primaryColor;
 
     return GestureDetector(
       onTap: () => setState(() => _selectedIndex = index),
       behavior: HitTestBehavior.opaque,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
-          child: Icon(
-            isSelected ? activeIcon : inactiveIcon,
-            key: ValueKey(isSelected),
-            color: isSelected ? Colors.white : Colors.white54, // Spotify Style: White vs Grey
-            size: 26,
-          ),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: isSelected ? primaryColor.withValues(alpha: 0.2) : Colors.transparent,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              transitionBuilder: (child, anim) {
+                return ScaleTransition(
+                  scale: Tween<double>(
+                    begin: 0.9,
+                    end: 1.0,
+                  ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOut)),
+                  child: FadeTransition(opacity: anim, child: child),
+                );
+              },
+              child: Icon(
+                isSelected ? activeIcon : inactiveIcon,
+                key: ValueKey('$index-$isSelected'),
+                color: isSelected ? primaryColor : Colors.white54,
+                size: 24,
+              ),
+            ),
+            const SizedBox(height: 4),
+            AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 200),
+              style: GoogleFonts.outfit(
+                fontSize: 10,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                color: isSelected ? primaryColor : Colors.white38,
+              ),
+              child: Text(label),
+            ),
+          ],
         ),
       ),
     );
@@ -628,34 +714,120 @@ class NeonShadowPainter extends CustomPainter {
   }
 }
 
-// Helper for Split "Wing" Path (===> O <===)
+// Helper for "Embracing Cradle" Path (Elegant notch for center button)
 Path _getNavbarPath(Size size) {
   final width = size.width;
   final height = size.height;
-  const centerGap = 35.0; // Half of total gap (70 total)
-  const cornerRadius = 24.0; // Slightly more rounded for "Spotify" pill feel
+
+  // Design constants
+  const pillRadius = 28.0; // Rounded ends
+  const notchRadius = 32.0; // Semicircular notch radius
+  const notchDepth = 10.0; // How deep the notch cuts in
+  final centerX = width / 2;
 
   Path path = Path();
 
-  // 1. Left Wing (Rounded Pill)
-  final leftRect = RRect.fromRectAndCorners(
-    Rect.fromLTRB(0, 0, (width / 2) - centerGap, height),
-    topLeft: const Radius.circular(cornerRadius),
-    bottomLeft: const Radius.circular(cornerRadius),
-    topRight: const Radius.circular(12),
-    bottomRight: const Radius.circular(12),
-  );
-  path.addRRect(leftRect);
+  // === SINGLE CONTINUOUS SHAPE WITH BOTTOM NOTCH ===
 
-  // 2. Right Wing (Rounded Pill)
-  final rightRect = RRect.fromRectAndCorners(
-    Rect.fromLTRB((width / 2) + centerGap, 0, width, height),
-    topLeft: const Radius.circular(12),
-    bottomLeft: const Radius.circular(12),
-    topRight: const Radius.circular(cornerRadius),
-    bottomRight: const Radius.circular(cornerRadius),
+  // Start: Bottom-left (after rounded corner)
+  path.moveTo(pillRadius, height);
+
+  // Bottom edge going right, stop before notch
+  path.lineTo(centerX - notchRadius - 5, height);
+
+  // Smooth entry into notch (left side)
+  path.quadraticBezierTo(
+    centerX - notchRadius + notchDepth,
+    height,
+    centerX - notchRadius + notchDepth,
+    height - notchDepth,
   );
-  path.addRRect(rightRect);
+
+  // Arc around the notch (semicircle cradle pointing UP)
+  path.arcToPoint(
+    Offset(centerX + notchRadius - notchDepth, height - notchDepth),
+    radius: Radius.circular(notchRadius - notchDepth),
+    clockwise: false,
+  );
+
+  // Smooth exit from notch (right side)
+  path.quadraticBezierTo(centerX + notchRadius - notchDepth, height, centerX + notchRadius + 5, height);
+
+  // Bottom edge continuing right
+  path.lineTo(width - pillRadius, height);
+
+  // Bottom-right corner
+  path.arcToPoint(Offset(width, height - pillRadius), radius: Radius.circular(pillRadius), clockwise: false);
+
+  // Right edge going up
+  path.lineTo(width, pillRadius);
+
+  // Top-right corner
+  path.arcToPoint(Offset(width - pillRadius, 0), radius: Radius.circular(pillRadius), clockwise: false);
+
+  // Top edge going left
+  path.lineTo(pillRadius, 0);
+
+  // Top-left corner
+  path.arcToPoint(Offset(0, pillRadius), radius: Radius.circular(pillRadius), clockwise: false);
+
+  // Left edge going down
+  path.lineTo(0, height - pillRadius);
+
+  // Bottom-left corner (back to start)
+  path.arcToPoint(Offset(pillRadius, height), radius: Radius.circular(pillRadius), clockwise: false);
+
+  path.close();
 
   return path;
+}
+
+// 🔵 Blue Neon Painter (Navbar Shape Aware) - Crystal Clear Edge
+class BlueNeonNavPainter extends CustomPainter {
+  final double glow;
+  final Color color;
+
+  BlueNeonNavPainter({required this.glow, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = _getNavbarPath(size);
+
+    // 🔵 TRUE STROKE GLOW (Multi-Layer Neon Tube Effect)
+    // Layer 1: Outermost diffuse glow (soft, wide)
+    final glow1 = Paint()
+      ..color = color.withValues(alpha: 0.15 + glow * 0.1)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 10 + glow * 10
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15);
+    canvas.drawPath(path, glow1);
+
+    // Layer 2: Mid glow (brighter, tighter)
+    final glow2 = Paint()
+      ..color = color.withValues(alpha: 0.4 + glow * 0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 10 + glow * 5
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
+    canvas.drawPath(path, glow2);
+
+    // Layer 3: Inner intense glow (core light)
+    final glow3 = Paint()
+      ..color = color.withValues(alpha: 0.7 + glow * 0.2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 5 + glow * 2
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    canvas.drawPath(path, glow3);
+
+    // Layer 4: Sharp neon core (white-hot center)
+    final corePaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawPath(path, corePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant BlueNeonNavPainter oldDelegate) {
+    return oldDelegate.glow != glow;
+  }
 }

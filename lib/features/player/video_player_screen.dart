@@ -7,7 +7,6 @@ import 'package:audio_service/audio_service.dart';
 import 'package:video_x/core/services/audio_handler_service.dart';
 import 'package:video_x/core/services/history_service.dart';
 import 'package:video_x/core/services/playback_manager.dart';
-import 'package:video_x/core/utils/format_utils.dart';
 import 'package:video_x/features/player/custom_controls.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'dart:async';
@@ -29,6 +28,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   bool _isMirrored = false;
   bool _isNightMode = false;
   bool _bgPlayEnabled = false;
+  double _videoScale = 1.0;
+  Offset _videoOffset = Offset.zero;
 
   StreamSubscription? _posSubscription;
   StreamSubscription? _videoStateSubscription;
@@ -36,7 +37,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   StreamSubscription? _indexSubscription;
 
   bool _orientationSet = false;
-  bool _resumeDone = false;
   int _lastPosition = 0;
   bool _startFromBeginning = false;
 
@@ -56,37 +56,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     // _bgPlayEnabled = false; // Default behavior - Removed as per instruction
     AudioHandlerService.uiNotificationsEnabled = false;
 
-    // Get player from PlaybackManager
     player = PlaybackManager.instance.player;
     controller = VideoController(player);
 
-    _syncNotificationMetadata(); // ALWAYS sync metadata on start to prevent stale data
+    _syncNotificationMetadata();
     _setupListeners();
 
-    _checkAndShowResumeDialog();
+    _lastPosition = HistoryService.getPosition(_currentAsset.id);
+    _startFromBeginning = _lastPosition <= 5;
+    _initializePlayer();
   }
 
   void _setupListeners() {
-    if (AudioHandlerService.isInitialized) {
-      // Setup callbacks for notification button presses
-      AudioHandlerService.instance.onSkipToNextHandler = () {
-        if (_canSkipNext) _skipNext();
-      };
-      AudioHandlerService.instance.onSkipToPreviousHandler = () {
-        if (_canSkipPrevious) _skipPrevious();
-      };
-
-      _indexSubscription = AudioHandlerService.instance.currentIndexStream.listen((index) {
-        if (index != _currentIndex && mounted) {
-          _saveAndSwitchTo(index);
-        }
-      });
-
-      // We don't call _syncNotificationMetadata here anymore.
-      // Notification will only appear if user enables BG Play or minimizes with it enabled.
-    }
-
-    _checkAndShowResumeDialog();
+    if (AudioHandlerService.isInitialized) {}
   }
 
   void _syncNotificationMetadata() {
@@ -107,53 +89,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     );
   }
 
-  Future<void> _checkAndShowResumeDialog() async {
-    _lastPosition = HistoryService.getPosition(_currentAsset.id);
-    if (_lastPosition > 5) {
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        final result = await _showResumeDialog();
-        _startFromBeginning = result != true;
-        if (_startFromBeginning) _lastPosition = 0;
-        _initializePlayer();
-      });
-    } else {
-      _startFromBeginning = true;
-      _initializePlayer();
-    }
-  }
-
-  Future<bool?> _showResumeDialog() async {
-    return showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: Colors.grey[900],
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text(
-            'Resume Playback?',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          content: Text(
-            'You were at ${FormatUtils.formatDuration(_lastPosition)}. Continue?',
-            style: TextStyle(color: Colors.grey[300]),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Start Over', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).primaryColor),
-              child: const Text('Continue', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   Future<void> _initializePlayer() async {
     final file = await _currentAsset.file;
     if (file == null) {
@@ -169,17 +104,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
       }
     });
 
-    if (!_startFromBeginning && _lastPosition > 0) {
-      _durationSubscription?.cancel();
-      _durationSubscription = player.stream.duration.listen((duration) async {
-        if (!_resumeDone && duration > Duration.zero && _lastPosition > 0) {
-          _resumeDone = true;
-          await player.seek(Duration(seconds: _lastPosition));
-        }
-      });
-    }
-
-    await player.open(Media(file.path));
+    await player.open(
+      Media(file.path, start: !_startFromBeginning && _lastPosition > 0 ? Duration(seconds: _lastPosition) : null),
+    );
 
     _posSubscription?.cancel();
     _posSubscription = player.stream.position.listen((pos) {
@@ -229,23 +156,18 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
     _durationSubscription?.cancel();
 
     await player.stop();
+
+    final int nextLastPos = HistoryService.getPosition(widget.playlist[newIndex].id);
+
     setState(() {
       _currentIndex = newIndex;
       _orientationSet = false;
-      _resumeDone = false;
-      _startFromBeginning = true;
-      _lastPosition = 0;
+      _lastPosition = nextLastPos;
+      _startFromBeginning = nextLastPos <= 5;
     });
 
-    _lastPosition = HistoryService.getPosition(_currentAsset.id);
-    if (_lastPosition > 5) {
-      final result = await _showResumeDialog();
-      _startFromBeginning = result != true;
-      if (_startFromBeginning) _lastPosition = 0;
-    }
-
     _initializePlayer();
-    _syncNotificationMetadata(); // ALWAYS sync metadata on skip
+    _syncNotificationMetadata();
   }
 
   bool get _canSkipPrevious => _currentIndex > 0;
@@ -310,7 +232,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black, // Pure black for immersive video
+      backgroundColor: Colors.black,
       body: AnnotatedRegion<SystemUiOverlayStyle>(
         value: const SystemUiOverlayStyle(
           statusBarColor: Colors.transparent,
@@ -324,32 +246,48 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> with WidgetsBindi
                 : const ColorFilter.mode(Colors.transparent, BlendMode.dst),
             child: Transform.flip(
               flipX: _isMirrored,
-              child: Video(
-                controller: controller,
-                fit: _videoFit,
-                controls: (state) => Transform.flip(
-                  flipX: _isMirrored,
-                  child: CustomControls(
-                    state: state,
-                    title: _currentAsset.title ?? 'Video',
-                    onAspectRatioToggle: _cycleAspectRatio,
-                    currentFit: _videoFit,
-                    onSkipNext: _canSkipNext ? _skipNext : null,
-                    onSkipPrevious: _canSkipPrevious ? _skipPrevious : null,
-                    isMirrored: _isMirrored,
-                    onMirrorToggle: _toggleMirror,
-                    isNightMode: _isNightMode,
-                    onNightModeToggle: _toggleNightMode,
-                    isBgPlayEnabled: _bgPlayEnabled,
-                    onBgPlayToggle: (enabled) {
-                      setState(() => _bgPlayEnabled = enabled);
-                      AudioHandlerService.uiNotificationsEnabled = enabled;
-                      if (enabled) {
-                        _syncNotificationMetadata();
-                      } else {
-                        AudioHandlerService.instance.stop();
-                      }
-                    },
+              child: Transform(
+                alignment: Alignment.center,
+                transform: Matrix4.identity()
+                  ..translate(_videoOffset.dx, _videoOffset.dy)
+                  ..scale(_videoScale),
+                child: Video(
+                  controller: controller,
+                  fit: _videoFit,
+                  controls: (state) => Transform.flip(
+                    flipX: _isMirrored,
+                    child: CustomControls(
+                      state: state,
+                      title: _currentAsset.title ?? 'Video',
+                      onAspectRatioToggle: _cycleAspectRatio,
+                      currentFit: _videoFit,
+                      resumePosition: _lastPosition > 5 ? _lastPosition : null,
+                      onSkipNext: _canSkipNext ? _skipNext : null,
+                      onSkipPrevious: _canSkipPrevious ? _skipPrevious : null,
+                      isMirrored: _isMirrored,
+                      onMirrorToggle: _toggleMirror,
+                      isNightMode: _isNightMode,
+                      onNightModeToggle: _toggleNightMode,
+                      isBgPlayEnabled: _bgPlayEnabled,
+                      onDoubleTapSeek: (forward) => forward ? _skipNext() : _skipPrevious(),
+                      onLongPressSpeedChange: (speedup) {},
+                      onDoubleTapCenter: player.playOrPause,
+                      onScaleUpdate: (scale, offset) {
+                        setState(() {
+                          _videoScale = scale;
+                          _videoOffset = offset;
+                        });
+                      },
+                      onBgPlayToggle: (enabled) {
+                        setState(() => _bgPlayEnabled = enabled);
+                        AudioHandlerService.uiNotificationsEnabled = enabled;
+                        if (enabled) {
+                          _syncNotificationMetadata();
+                        } else {
+                          AudioHandlerService.instance.stop();
+                        }
+                      },
+                    ),
                   ),
                 ),
               ),

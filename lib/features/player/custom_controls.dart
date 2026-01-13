@@ -6,12 +6,15 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:video_x/core/utils/format_utils.dart';
 import 'package:video_x/features/player/gesture_overlay.dart';
+import 'package:file_picker/file_picker.dart';
 
-// Video X Colors
-const Color vxPrimary = Color(0xFF2962FF); // Royal Blue to match Home Screen
-const Color vxSecondary = Color(0xFF82B1FF); // Light Blue Accent
+// Video X Colors - Refined for Premium Blue Glow
+const Color vxPrimary = Color(0xFF00B0FF); // Vibrant Cyan/Blue from image
+const Color vxSecondary = Color(0xFF00E5FF); // Lighter Cyan for gradients
+const Color vxDeepNavy = Color(0xFF000814); // Very deep navy background
+const Color vxGlowBlue = Color(0xFF2962FF); // Deep royal blue for glow shadows
 
-enum PlayerOverlay { none, equalizer, sleep, speed }
+enum PlayerOverlay { none, equalizer, sleep, speed, subtitles, more }
 
 class CustomControls extends StatefulWidget {
   final VideoState state;
@@ -26,6 +29,11 @@ class CustomControls extends StatefulWidget {
   final VoidCallback onNightModeToggle;
   final bool isBgPlayEnabled;
   final ValueChanged<bool>? onBgPlayToggle;
+  final Function(double scale, Offset offset)? onScaleUpdate;
+  final Function(bool isForward) onDoubleTapSeek;
+  final Function(bool isSpeedUp) onLongPressSpeedChange;
+  final VoidCallback onDoubleTapCenter;
+  final int? resumePosition;
 
   const CustomControls({
     super.key,
@@ -41,6 +49,11 @@ class CustomControls extends StatefulWidget {
     required this.onNightModeToggle,
     this.isBgPlayEnabled = false,
     this.onBgPlayToggle,
+    this.onScaleUpdate,
+    required this.onDoubleTapSeek,
+    required this.onLongPressSpeedChange,
+    required this.onDoubleTapCenter,
+    this.resumePosition,
   });
 
   @override
@@ -72,6 +85,17 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
 
   PlayerOverlay _activeOverlay = PlayerOverlay.none;
 
+  // Subtitle states
+  List<SubtitleTrack> _subtitleTracks = [];
+  SubtitleTrack _selectedSubtitle = SubtitleTrack.no();
+
+  // Decoder states
+  bool _useHardwareDecoder = true;
+
+  // Resume notification
+  bool _showResumeNotification = false;
+  Timer? _resumeNotificationTimer;
+
   // Animations
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
@@ -90,21 +114,36 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
     _fadeController.forward();
     _startHideTimer();
     _setupABRepeat();
+    _fetchSubtitles();
 
-    // Listen for PiP actions
-    platform.setMethodCallHandler((call) async {
-      if (call.method == 'playPause') {
-        player.playOrPause();
-      }
-    });
+    if (widget.resumePosition != null) {
+      _showResumeNotification = true;
+      _resumeNotificationTimer?.cancel();
+      _resumeNotificationTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted) setState(() => _showResumeNotification = false);
+      });
+    }
 
     // Sync PiP state
     player.stream.playing.listen((playing) {
       if (mounted) {
-        // Ideally should check if in PiP, but simple sync is fine
         platform.invokeMethod('updatePipState', {'playing': playing});
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(CustomControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.resumePosition != oldWidget.resumePosition && widget.resumePosition != null) {
+      setState(() {
+        _showResumeNotification = true;
+      });
+      _resumeNotificationTimer?.cancel();
+      _resumeNotificationTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted) setState(() => _showResumeNotification = false);
+      });
+    }
   }
 
   void _setupABRepeat() {
@@ -117,8 +156,16 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
     });
   }
 
+  void _fetchSubtitles() {
+    setState(() {
+      _subtitleTracks = player.state.tracks.subtitle;
+      _selectedSubtitle = player.state.track.subtitle;
+    });
+  }
+
   @override
   void dispose() {
+    _resumeNotificationTimer?.cancel();
     _hideTimer?.cancel();
     _sleepTimer?.cancel();
     _fadeController.dispose();
@@ -279,7 +326,7 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
   }
 
   // MethodChannel for native PiP
-  static const platform = MethodChannel('com.example.video_x/pip');
+  final platform = const MethodChannel('com.example.video_x/pip');
 
   // Popup Player
   Future<void> _showPopupPlayer() async {
@@ -315,6 +362,14 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
     });
   }
 
+  void _handleLongPressSpeed(bool isSpeedUp) {
+    if (isSpeedUp) {
+      player.setRate(2.0);
+    } else {
+      player.setRate(_playbackSpeed);
+    }
+  }
+
   Widget _buildActiveOverlay() {
     switch (_activeOverlay) {
       case PlayerOverlay.equalizer:
@@ -323,101 +378,342 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
         return _buildFeatureOverlay('Sleep Timer', Icons.bedtime, _buildSleepOverlay());
       case PlayerOverlay.speed:
         return _buildFeatureOverlay('Playback Speed', Icons.speed, _buildSpeedOverlay());
+      case PlayerOverlay.subtitles:
+        return _buildFeatureOverlay('Subtitles', Icons.closed_caption_rounded, _buildSubtitleOverlay());
+      case PlayerOverlay.more:
+        return _buildMoreMenu();
       default:
         return const SizedBox.shrink();
     }
   }
 
-  Widget _buildFeatureOverlay(String title, IconData icon, Widget child) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final double vPadding = constraints.maxHeight < 400 ? 12 : 20;
-        final double hPadding = constraints.maxWidth < 600 ? 16 : 24;
+  Widget _buildSubtitleOverlay() {
+    return Column(
+      children: [
+        _buildPillButton('Add Subtitle File', false, _pickSubtitleFile, isDestructive: false),
+        const SizedBox(height: 16),
+        ...List.generate(_subtitleTracks.length, (index) {
+          final track = _subtitleTracks[index];
+          final isSelected = _selectedSubtitle == track;
+          return Padding(padding: const EdgeInsets.only(bottom: 8.0), child: _buildSubtitleItem(track, isSelected));
+        }),
+      ],
+    );
+  }
 
-        return GestureDetector(
+  Widget _buildSubtitleItem(SubtitleTrack track, bool isSelected) {
+    String label = track.title ?? track.language ?? 'Track ${track.id}';
+    if (track.id == 'no') label = 'None';
+
+    return GestureDetector(
+      onTap: () {
+        player.setSubtitleTrack(track);
+        setState(() => _selectedSubtitle = track);
+        _showSnack('Subtitle: $label');
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? vxPrimary.withOpacity(0.1) : Colors.white.withOpacity(0.03),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: isSelected ? vxPrimary.withOpacity(0.5) : Colors.transparent),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected ? Icons.check_circle_rounded : Icons.closed_caption_outlined,
+              color: isSelected ? vxPrimary : Colors.white38,
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(label, style: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontSize: 14)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickSubtitleFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['srt', 'vtt', 'ass', 'ssa'],
+      );
+      if (result != null && result.files.single.path != null) {
+        final path = result.files.single.path!;
+        final track = SubtitleTrack.uri(path);
+        player.setSubtitleTrack(track);
+        _fetchSubtitles();
+        setState(() {
+          _selectedSubtitle = track;
+          _activeOverlay = PlayerOverlay.none;
+        });
+        _showSnack('Loaded subtitle: ${result.files.single.name}');
+      }
+    } catch (e) {
+      _showSnack('Error picking file: $e');
+    }
+  }
+
+  Widget _buildMoreMenu() {
+    return Stack(
+      children: [
+        // Background Dim
+        GestureDetector(
           onTap: () => setState(() => _activeOverlay = PlayerOverlay.none),
-          behavior: HitTestBehavior.opaque,
-          child: ClipRect(
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.bottomCenter,
-                    end: Alignment.topCenter,
-                    stops: const [0.0, 0.35, 0.65, 1.0],
-                    colors: [
-                      Colors.black.withOpacity(0.92), // solid base
-                      Colors.black.withOpacity(0.75), // lift start
-                      vxPrimary.withOpacity(0.35), // smooth blue merge
-                      vxPrimary.withOpacity(0.65), // subtle blue glow
-                    ],
-                  ),
-                ),
-                child: Center(
-                  child: GestureDetector(
-                    onTap: () {}, // Prevent dismissal when tapping the content
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      margin: EdgeInsets.symmetric(horizontal: hPadding, vertical: vPadding),
-                      padding: EdgeInsets.all(vPadding),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.bottomCenter,
-                          end: Alignment.topCenter,
-                          stops: const [0.0, 0.6, 1.0],
-                          colors: [
-                            Colors.black.withOpacity(0.9),
-                            Colors.black.withOpacity(0.6),
-                            vxPrimary.withOpacity(0.15),
-                          ],
-                        ),
-
-                        borderRadius: BorderRadius.circular(28),
-                        border: Border.all(color: Colors.white.withOpacity(0.1)),
-                        boxShadow: [
-                          BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 40, offset: const Offset(0, 20)),
-                        ],
-                      ),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 340),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
+          child: Container(color: Colors.black45),
+        ),
+        // Side Panel
+        Align(
+          alignment: Alignment.centerRight,
+          child: Container(
+            width: 280,
+            height: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [Colors.black.withOpacity(0.4), Colors.black.withOpacity(0.95)],
+              ),
+              boxShadow: [BoxShadow(color: Colors.black54, blurRadius: 40)],
+            ),
+            child: ClipRRect(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                child: SafeArea(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Row(
                           children: [
-                            Row(
-                              children: [
-                                Icon(icon, color: vxPrimary),
-                                const SizedBox(width: 12),
-                                Text(
-                                  title,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const Spacer(),
-                                IconButton(
-                                  icon: const Icon(Icons.close_rounded, color: Colors.white54),
-                                  onPressed: () => setState(() => _activeOverlay = PlayerOverlay.none),
-                                ),
-                              ],
+                            const Text(
+                              'More Settings',
+                              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
                             ),
-                            const Divider(color: Colors.white10, height: 32),
-                            Flexible(
-                              child: SingleChildScrollView(physics: const BouncingScrollPhysics(), child: child),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                              onPressed: () => setState(() => _activeOverlay = PlayerOverlay.none),
                             ),
                           ],
                         ),
                       ),
-                    ),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Column(
+                            children: [
+                              _buildMoreItem(
+                                'Decoder',
+                                _useHardwareDecoder ? 'Hardware (HW)' : 'Software (SW)',
+                                Icons.settings_input_component_rounded,
+                                () {
+                                  setState(() => _useHardwareDecoder = !_useHardwareDecoder);
+                                  _showSnack(
+                                    _useHardwareDecoder ? 'Hardware Decoder Enabled' : 'Software Decoder Enabled',
+                                  );
+                                },
+                              ),
+                              _buildMoreItem(
+                                'Orientation',
+                                'Auto-Rotate',
+                                Icons.screen_rotation_rounded,
+                                _toggleLandscape,
+                              ),
+                              _buildMoreItem(
+                                'Aspect Ratio',
+                                widget.currentFit.name.toUpperCase(),
+                                Icons.aspect_ratio_rounded,
+                                widget.onAspectRatioToggle,
+                              ),
+                              _buildMoreItem(
+                                'Audio Boost',
+                                'Normal',
+                                Icons.volume_up_rounded,
+                                () => _showSnack('Audio Boost: Normal'),
+                              ),
+                              _buildMoreItem(
+                                'Playback Speed',
+                                '${_playbackSpeed}x',
+                                Icons.speed_rounded,
+                                _showSpeedSelector,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMoreItem(String title, String subtitle, IconData icon, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.04),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withOpacity(0.05)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: vxPrimary.withOpacity(0.1), shape: BoxShape.circle),
+                child: Icon(icon, color: vxPrimary, size: 20),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12)),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: Colors.white.withOpacity(0.3)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFeatureOverlay(String title, IconData icon, Widget child) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double vPadding = constraints.maxHeight < 400 ? 10 : 20;
+        final double hPadding = constraints.maxWidth < 600 ? 12 : 24;
+
+        return GestureDetector(
+          onTap: () => setState(() => _activeOverlay = PlayerOverlay.none),
+          behavior: HitTestBehavior.opaque,
+          child: Stack(
+            children: [
+              // 1. Full Screen Blur Backdrop
+              Positioned.fill(
+                child: ClipRect(
+                  child: BackdropFilter(
+                    filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    child: Container(color: Colors.black.withOpacity(0.55)),
+                  ),
+                ),
+              ),
+
+              // 2. Main Dialog Container (Compact)
+              Center(
+                child: GestureDetector(
+                  onTap: () {}, // Prevent dismissal
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 320), // Smaller max width
+                    margin: EdgeInsets.symmetric(horizontal: hPadding, vertical: vPadding),
+                    decoration: BoxDecoration(
+                      color: vxDeepNavy.withOpacity(0.92),
+                      borderRadius: BorderRadius.circular(28),
+                      border: Border.all(color: vxPrimary.withOpacity(0.4), width: 1.2),
+                      boxShadow: [BoxShadow(color: vxPrimary.withOpacity(0.12), blurRadius: 30, spreadRadius: 1)],
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [vxDeepNavy, vxDeepNavy.withOpacity(0.9), vxGlowBlue.withOpacity(0.08)],
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Header Handle
+                        Container(
+                          margin: const EdgeInsets.only(top: 10),
+                          width: 30,
+                          height: 3,
+                          decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(1.5)),
+                        ),
+
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 8, 8, 8),
+                          child: Row(
+                            children: [
+                              Icon(icon, color: vxPrimary, size: 20), // Smaller icon
+                              const SizedBox(width: 10),
+                              Text(
+                                title,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16, // Smaller text
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.4,
+                                ),
+                              ),
+                              const Spacer(),
+                              _buildCloseButton(),
+                            ],
+                          ),
+                        ),
+
+                        // Subtle Divider
+                        Container(
+                          height: 1,
+                          width: double.infinity,
+                          margin: const EdgeInsets.symmetric(horizontal: 20),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Colors.transparent, vxPrimary.withOpacity(0.2), Colors.transparent],
+                            ),
+                          ),
+                        ),
+
+                        Flexible(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            child: SingleChildScrollView(physics: const BouncingScrollPhysics(), child: child),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         );
       },
+    );
+  }
+
+  Widget _buildCloseButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => setState(() => _activeOverlay = PlayerOverlay.none),
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withOpacity(0.04)),
+          child: const Icon(Icons.close_rounded, color: Colors.white60, size: 18),
+        ),
+      ),
     );
   }
 
@@ -448,18 +744,20 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
                   });
                   _updateEqualizer();
                 },
-                child: Container(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
                   margin: const EdgeInsets.only(right: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                   decoration: BoxDecoration(
-                    color: isSelected ? vxPrimary : Colors.white10,
+                    color: isSelected ? vxPrimary : Colors.white.withOpacity(0.05),
                     borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: isSelected ? Colors.white24 : Colors.transparent),
                   ),
                   child: Text(
                     p,
                     style: TextStyle(
-                      color: isSelected ? Colors.white : Colors.white70,
-                      fontSize: 13,
+                      color: isSelected ? Colors.black : Colors.white70,
+                      fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -482,14 +780,18 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
                 const SizedBox(height: 8),
                 SizedBox(
                   height: 140,
+                  width: 30,
                   child: RotatedBox(
                     quarterTurns: 3,
                     child: SliderTheme(
                       data: SliderTheme.of(context).copyWith(
-                        trackHeight: 4,
-                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                        trackHeight: 10,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10, pressedElevation: 8),
+                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 20),
                         activeTrackColor: vxPrimary,
-                        inactiveTrackColor: Colors.white10,
+                        inactiveTrackColor: Colors.white.withOpacity(0.05),
+                        thumbColor: Colors.white,
+                        overlayColor: vxPrimary.withOpacity(0.2),
                       ),
                       child: Slider(
                         value: _equalizerGains[index],
@@ -519,84 +821,79 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
   }
 
   Widget _buildSleepOverlay() {
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          ...[5, 10, 15, 30, 45, 60].map(
-            (mins) => _buildOverlayItem(
-              '$mins minutes',
-              _sleepMinutes == mins ? Icons.check_circle : Icons.timer_outlined,
-              _sleepMinutes == mins,
-              () {
-                _sleepTimer?.cancel();
-                setState(() => _sleepMinutes = mins);
-                _sleepTimer = Timer(Duration(minutes: mins), () {
-                  player.pause();
-                  if (mounted) setState(() => _sleepMinutes = 0);
-                });
-                setState(() => _activeOverlay = PlayerOverlay.none);
-              },
-            ),
-          ),
-          if (_sleepMinutes > 0)
-            _buildOverlayItem('Cancel Timer', Icons.cancel, false, () {
-              _sleepTimer?.cancel();
-              setState(() => _sleepMinutes = 0);
-              setState(() => _activeOverlay = PlayerOverlay.none);
-            }, isDestructive: true),
+    return Column(
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          alignment: WrapAlignment.center,
+          children: [5, 10, 15, 30, 45, 60]
+              .map(
+                (mins) => _buildPillButton('$mins min', _sleepMinutes == mins, () {
+                  _sleepTimer?.cancel();
+                  setState(() => _sleepMinutes = mins);
+                  _sleepTimer = Timer(Duration(minutes: mins), () {
+                    player.pause();
+                    if (mounted) setState(() => _sleepMinutes = 0);
+                  });
+                  setState(() => _activeOverlay = PlayerOverlay.none);
+                }),
+              )
+              .toList(),
+        ),
+        if (_sleepMinutes > 0) ...[
+          const SizedBox(height: 20),
+          _buildPillButton('Cancel Timer', false, () {
+            _sleepTimer?.cancel();
+            setState(() => _sleepMinutes = 0);
+            setState(() => _activeOverlay = PlayerOverlay.none);
+          }, isDestructive: true),
         ],
-      ),
+      ],
     );
   }
 
   Widget _buildSpeedOverlay() {
-    return SingleChildScrollView(
-      child: Wrap(
-        spacing: 12,
-        runSpacing: 12,
-        alignment: WrapAlignment.center,
-        children: [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
-            .map(
-              (speed) => GestureDetector(
-                onTap: () {
-                  setState(() => _playbackSpeed = speed);
-                  player.setRate(speed);
-                  setState(() => _activeOverlay = PlayerOverlay.none);
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: _playbackSpeed == speed ? vxPrimary : Colors.white10,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: _playbackSpeed == speed ? Colors.white24 : Colors.transparent),
-                  ),
-                  child: Text(
-                    '${speed}x',
-                    style: TextStyle(
-                      color: _playbackSpeed == speed ? Colors.white : Colors.white70,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-            )
-            .toList(),
-      ),
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      alignment: WrapAlignment.center,
+      children: [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+          .map(
+            (speed) => _buildPillButton('${speed}x', _playbackSpeed == speed, () {
+              setState(() => _playbackSpeed = speed);
+              player.setRate(speed);
+              setState(() => _activeOverlay = PlayerOverlay.none);
+            }),
+          )
+          .toList(),
     );
   }
 
-  Widget _buildOverlayItem(
-    String title,
-    IconData icon,
-    bool isActive,
-    VoidCallback onTap, {
-    bool isDestructive = false,
-  }) {
-    return ListTile(
-      leading: Icon(icon, color: isDestructive ? Colors.redAccent : (isActive ? vxPrimary : Colors.grey)),
-      title: Text(title, style: TextStyle(color: isDestructive ? Colors.redAccent : Colors.white)),
+  Widget _buildPillButton(String label, bool isActive, VoidCallback onTap, {bool isDestructive = false}) {
+    return GestureDetector(
       onTap: onTap,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        decoration: BoxDecoration(
+          color: isActive ? vxPrimary : (isDestructive ? Colors.red.withOpacity(0.12) : Colors.white.withOpacity(0.05)),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: isActive
+                ? Colors.white.withOpacity(0.2)
+                : (isDestructive ? Colors.red.withOpacity(0.2) : Colors.transparent),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isActive ? Colors.black : (isDestructive ? Colors.redAccent : Colors.white70),
+            fontWeight: FontWeight.bold,
+            fontSize: 13,
+          ),
+        ),
+      ),
     );
   }
 
@@ -630,6 +927,8 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
         GestureOverlay(
           onTap: _toggleVisibility,
           onDoubleTapSeek: (forward) => forward ? _skip10Forward() : _skip10Backward(),
+          onLongPressSpeedChange: _handleLongPressSpeed,
+          onScaleUpdate: widget.onScaleUpdate,
           onDoubleTapCenter: player.playOrPause,
         ),
         if (_visible)
@@ -680,6 +979,7 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
               ),
             ),
           ),
+        _buildResumeNotification(),
         _buildActiveOverlay(),
       ],
     );
@@ -740,9 +1040,9 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
               ),
             ),
             _buildIconBtn(Icons.high_quality, () {}),
-            _buildIconBtn(Icons.closed_caption, () => _showSnack('Subtitles coming soon')),
+            _buildIconBtn(Icons.closed_caption, () => setState(() => _activeOverlay = PlayerOverlay.subtitles)),
             _buildIconBtn(Icons.playlist_play_rounded, () => _showSnack('Playlist coming soon')),
-            _buildIconBtn(Icons.more_horiz, () {}),
+            _buildIconBtn(Icons.more_horiz, () => setState(() => _activeOverlay = PlayerOverlay.more)),
           ],
         ),
       ),
@@ -1162,6 +1462,62 @@ class _CustomControlsState extends State<CustomControls> with TickerProviderStat
         margin: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
         duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Widget _buildResumeNotification() {
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+      bottom: _showResumeNotification ? 80 : -100,
+      left: 20,
+      right: 20,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.9),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: Colors.white.withOpacity(0.12)),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 15, offset: const Offset(0, 5))],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.history_rounded, color: vxPrimary, size: 22),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Text(
+                  'Resumed from ${FormatUtils.formatDuration(widget.resumePosition ?? 0)}',
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Container(width: 1, height: 24, color: Colors.white24),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () {
+                  player.seek(Duration.zero);
+                  setState(() => _showResumeNotification = false);
+                },
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  visualDensity: VisualDensity.compact,
+                ),
+                child: const Text(
+                  'START OVER',
+                  style: TextStyle(color: vxPrimary, fontSize: 13, fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 20),
+                onPressed: () => setState(() => _showResumeNotification = false),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
