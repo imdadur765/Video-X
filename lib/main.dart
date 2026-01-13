@@ -4,10 +4,17 @@ import 'package:video_x/core/theme/app_theme.dart';
 import 'package:video_x/features/home/home_screen.dart';
 import 'package:video_x/core/services/history_service.dart';
 
+import 'package:video_x/core/services/audio_handler_service.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   await HistoryService.init();
+  try {
+    await AudioHandlerService.init();
+  } catch (e) {
+    debugPrint("Failed to initialize AudioService: $e");
+  }
   runApp(const VideoXApp());
 }
 

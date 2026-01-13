@@ -9,6 +9,9 @@ class PermissionService {
 
       // Android 13 (API 33) and above use granular media permissions
       if (androidInfo.version.sdkInt >= 33) {
+        // Request Notification permission (POST_NOTIFICATIONS)
+        await Permission.notification.request();
+
         final videos = await Permission.videos.request();
         // We can request audio/images if we want a complete gallery view,
         // but for a video player, videos is the critical one.
