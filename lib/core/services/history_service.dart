@@ -13,15 +13,19 @@ class HistoryService {
   static Future<void> savePosition(String videoId, int positionSeconds) async {
     final box = Hive.box(_boxName);
     await box.put(videoId, positionSeconds);
-    // debugPrint("HistoryService: Saved $positionSeconds for $videoId");
+    await box.put('last_played_id', videoId); // Track the most recent video
   }
 
   // Get last playback position
   static int getPosition(String videoId) {
     if (!Hive.isBoxOpen(_boxName)) return 0;
     final box = Hive.box(_boxName);
-    final pos = box.get(videoId, defaultValue: 0);
-    // debugPrint("HistoryService: Retrieved $pos for $videoId");
-    return pos;
+    return box.get(videoId, defaultValue: 0);
+  }
+
+  // Get last played video ID
+  static String? getLastPlayedId() {
+    if (!Hive.isBoxOpen(_boxName)) return null;
+    return Hive.box(_boxName).get('last_played_id');
   }
 }

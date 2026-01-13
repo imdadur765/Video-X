@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -6,6 +7,7 @@ import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
 
 import 'package:video_x/core/services/media_service.dart';
 import 'package:video_x/core/services/permission_service.dart';
+import 'package:video_x/core/services/history_service.dart';
 import 'package:video_x/core/utils/format_utils.dart';
 import 'package:video_x/features/player/video_player_screen.dart';
 import 'package:video_x/features/profile/profile_screen.dart';
@@ -24,9 +26,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final PermissionService _permissionService = PermissionService();
 
   List<AssetEntity> _videos = [];
+  List<AssetEntity> _recentVideos = [];
   bool _isLoading = true;
   bool _hasPermission = false;
-  bool _isGridView = false;
+  final bool _isGridView = false;
+  AssetEntity? _lastPlayedVideo;
 
   // Navbar hide/show on scroll
   bool _isNavbarVisible = true;
@@ -36,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late AnimationController _animationController;
   late AnimationController _pulseController;
   late AnimationController _navbarController;
+  late AnimationController _headerController;
 
   @override
   void initState() {
@@ -46,6 +51,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // Navbar hide/show animation
     _navbarController = AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
     _navbarController.value = 1.0; // Start visible
+
+    // 🌊 Deep Animated Gradient for Header (Slower & Smoother)
+    _headerController = AnimationController(vsync: this, duration: const Duration(seconds: 15))..repeat();
+
     _checkPermissionAndLoad();
   }
 
@@ -54,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _animationController.dispose();
     _pulseController.dispose();
     _navbarController.dispose();
+    _headerController.dispose();
     super.dispose();
   }
 
@@ -87,9 +97,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _loadVideos() async {
     final videos = await _mediaService.getAllVideos();
+    final recent = await _mediaService.getRecentlyAdded();
+
+    // Try to get last played video for hero
+    AssetEntity? lastPlayed;
+    final lastId = HistoryService.getLastPlayedId();
+    if (lastId != null && videos.isNotEmpty) {
+      try {
+        lastPlayed = videos.firstWhere((v) => v.id == lastId);
+      } catch (_) {}
+    }
+
     if (mounted) {
       setState(() {
         _videos = videos;
+        _recentVideos = recent;
+        _lastPlayedVideo = lastPlayed;
         _isLoading = false;
       });
       _animationController.forward();
@@ -119,87 +142,65 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // 🔥 Premium Header
   Widget _buildSliverAppBar() {
     return SliverAppBar(
-      expandedHeight: 140,
+      expandedHeight: 200, // Increased height as requested
       pinned: true,
       elevation: 0,
       backgroundColor: Colors.transparent,
-      flexibleSpace: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            stops: const [0.0, 0.15, 1.0],
-            colors: [
-              Colors.black,
-              Theme.of(context).scaffoldBackgroundColor.withValues(alpha: 0.5),
-              Theme.of(context).primaryColor.withValues(alpha: 0.9),
-            ],
+      flexibleSpace: FlexibleSpaceBar(
+        centerTitle: true,
+        titlePadding: const EdgeInsets.only(bottom: 25),
+        title: Text(
+          'VISION X',
+          style: GoogleFonts.audiowide(
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 4.0,
+            color: Colors.white,
+            shadows: [Shadow(color: Theme.of(context).primaryColor.withValues(alpha: 0.8), blurRadius: 20)],
           ),
         ),
-        child: FlexibleSpaceBar(
-          titlePadding: const EdgeInsets.only(left: 16, bottom: 14),
-          title: Text(_getTitle(), style: GoogleFonts.outfit(fontSize: 20, fontWeight: FontWeight.w700)),
+        background: AnimatedBuilder(
+          animation: _headerController,
+          builder: (context, child) {
+            final t = _headerController.value;
+            // 🌊 Ultra-smooth oscillation for multiple color layers
+            final colorMix = 0.5 + 0.5 * math.sin(t * 2 * math.pi);
+            final stopShift = 0.1 * math.cos(t * 2 * math.pi);
+
+            return ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40), // Ultra-soft blur
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: [0.0, 0.3 + stopShift, 0.6, 1.0],
+                    colors: [
+                      Color.lerp(
+                        const Color(0xFF6200EA), // Bright Purple
+                        const Color(0xFFFF00FF), // Magenta/Pink
+                        colorMix,
+                      )!,
+                      Color.lerp(
+                        const Color(0xFF00B0FF), // Bright Blue
+                        const Color(0xFF1A1A40), // Deep Sea Blue
+                        1.0 - colorMix,
+                      )!,
+                      const Color(0xFF0D001A),
+                      Colors.black,
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
-      actions: [
-        IconButton(icon: const Icon(Icons.search_rounded), onPressed: () {}),
-        IconButton(
-          icon: Icon(_isGridView ? Icons.view_list_rounded : Icons.grid_view_rounded),
-          onPressed: () => setState(() => _isGridView = !_isGridView),
-        ),
-        Theme(
-          data: Theme.of(context).copyWith(
-            cardColor: const Color(0xFF1E1E1E),
-            iconTheme: const IconThemeData(color: Colors.white),
-          ),
-          child: PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            color: const Color(0xFF1E1E1E).withValues(alpha: 0.95),
-            offset: const Offset(0, 50),
-            onSelected: (value) {
-              if (value == 'Refresh') _loadVideos();
-            },
-            itemBuilder: (context) => [
-              _buildPopupMenuItem('Refresh', Icons.refresh_rounded),
-              _buildPopupMenuItem('Sort Order', Icons.sort_rounded),
-              _buildPopupMenuItem('Settings', Icons.settings_rounded),
-            ],
-          ),
-        ),
-      ],
+      actions: const [],
     );
   }
 
-  String _getTitle() {
-    switch (_selectedIndex) {
-      case 0:
-        return 'All Videos';
-      case 1:
-        return 'Folders';
-      case 2:
-        return 'Explore';
-      case 3:
-        return 'Recent';
-      case 4:
-        return 'Profile';
-      default:
-        return 'Videos';
-    }
-  }
-
-  PopupMenuItem<String> _buildPopupMenuItem(String title, IconData icon) {
-    return PopupMenuItem(
-      value: title,
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: Colors.white70),
-          const SizedBox(width: 12),
-          Text(title, style: GoogleFonts.outfit(color: Colors.white, fontSize: 15)),
-        ],
-      ),
-    );
-  }
+  // Removed _getTitle and _buildPopupMenuItem as they are no longer used by the minimalist header
 
   // 📜 Handle scroll to hide/show navbar
   bool _handleScrollNotification(ScrollNotification notification) {
@@ -276,7 +277,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             children: [
                               _navItem(0, Icons.home_rounded, Icons.home_outlined, 'Home'),
-                              _navItem(1, Icons.folder_rounded, Icons.folder_outlined, 'Folders'),
+                              _navItem(1, Icons.video_library_rounded, Icons.video_library_outlined, 'Videos'),
                             ],
                           ),
                         ),
@@ -287,7 +288,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             children: [
-                              _navItem(3, Icons.history_rounded, Icons.history_outlined, 'Recent'),
+                              _navItem(3, Icons.folder_rounded, Icons.folder_outlined, 'Folders'),
                               _navItem(4, Icons.person_rounded, Icons.person_outline_rounded, 'Profile'),
                             ],
                           ),
@@ -414,18 +415,294 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildHomeDashboard() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      children: [
+        _buildHeroSection(),
+        const SizedBox(height: 25),
+        _buildSectionTitle('Quick Tools'),
+        _buildQuickTools(),
+        const SizedBox(height: 25),
+        _buildSectionTitle('Recently Added', onSeeAll: () => setState(() => _selectedIndex = 1)),
+        _buildHorizontalVideoList(),
+        const SizedBox(height: 25),
+        _buildSectionTitle('Folders', onSeeAll: () => setState(() => _selectedIndex = 3)),
+        _buildHorizontalFolderList(),
+        const SizedBox(height: 100), // Space for navbar
+      ],
+    );
+  }
+
+  Widget _buildSectionTitle(String title, {VoidCallback? onSeeAll}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.outfit(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+          ),
+          if (onSeeAll != null)
+            TextButton(
+              onPressed: onSeeAll,
+              child: Text('See All', style: GoogleFonts.outfit(color: Theme.of(context).primaryColor, fontSize: 13)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeroSection() {
+    if (_lastPlayedVideo == null) {
+      return Container(
+        margin: const EdgeInsets.symmetric(horizontal: 20),
+        height: 180,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(24),
+          gradient: LinearGradient(
+            colors: [Theme.of(context).primaryColor.withValues(alpha: 0.3), Colors.black12],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.video_library_rounded, size: 40, color: Theme.of(context).primaryColor.withValues(alpha: 0.5)),
+              const SizedBox(height: 10),
+              Text('Welcome to Video X', style: GoogleFonts.outfit(color: Colors.white70, fontSize: 16)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final int pos = HistoryService.getPosition(_lastPlayedVideo!.id);
+    final double progress = _lastPlayedVideo!.duration > 0 ? pos / _lastPlayedVideo!.duration : 0;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20),
+      height: 200,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image(image: AssetEntityImageProvider(_lastPlayedVideo!, isOriginal: false), fit: BoxFit.cover),
+            // Glass Overlay
+            BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 0, sigmaY: 0),
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [Colors.black.withValues(alpha: 0.9), Colors.transparent],
+                  ),
+                ),
+              ),
+            ),
+            // Content
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(6)),
+                    child: Text(
+                      'CONTINUE',
+                      style: GoogleFonts.outfit(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    _lastPlayedVideo!.title ?? 'Untitled',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.outfit(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: progress,
+                            backgroundColor: Colors.white12,
+                            valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).primaryColor),
+                            minHeight: 4,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 15),
+                      GestureDetector(
+                        onTap: () => _openPlayerFromDashboard(_lastPlayedVideo!),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(color: Theme.of(context).primaryColor, shape: BoxShape.circle),
+                          child: const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 28),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickTools() {
+    return SizedBox(
+      height: 100,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 15),
+        children: [
+          _buildToolItem('Private', Icons.lock_outline_rounded, Colors.purpleAccent),
+          _buildToolItem('Music', Icons.music_note_rounded, Colors.orangeAccent),
+          _buildToolItem('Network', Icons.language_rounded, Colors.blueAccent),
+          _buildToolItem('Link', Icons.link_rounded, Colors.tealAccent),
+          _buildToolItem('History', Icons.history_rounded, Colors.grey),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToolItem(String label, IconData icon, Color color) {
+    return Container(
+      width: 85,
+      margin: const EdgeInsets.symmetric(horizontal: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E).withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 28),
+          const SizedBox(height: 8),
+          Text(label, style: GoogleFonts.outfit(color: Colors.white60, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHorizontalVideoList() {
+    if (_recentVideos.isEmpty) return const SizedBox();
+    return SizedBox(
+      height: 160,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 15),
+        itemCount: _recentVideos.length,
+        itemBuilder: (context, index) {
+          final video = _recentVideos[index];
+          return GestureDetector(
+            onTap: () => _openPlayerFromDashboard(video),
+            child: Container(
+              width: 160,
+              margin: const EdgeInsets.symmetric(horizontal: 5),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Image(image: AssetEntityImageProvider(video, isOriginal: false), fit: BoxFit.cover),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    video.title ?? 'Untitled',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHorizontalFolderList() {
+    return FutureBuilder<List<AssetPathEntity>>(
+      future: _mediaService.getVideoFolders(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.isEmpty) return const SizedBox();
+        final folders = snapshot.data!.take(5).toList();
+
+        return SizedBox(
+          height: 100,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 15),
+            itemCount: folders.length,
+            itemBuilder: (context, index) {
+              final album = folders[index];
+              return GestureDetector(
+                onTap: () => setState(() => _selectedIndex = 3),
+                child: Container(
+                  width: 140,
+                  margin: const EdgeInsets.symmetric(horizontal: 5),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.folder_rounded, color: Theme.of(context).primaryColor, size: 24),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          album.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.outfit(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  void _openPlayerFromDashboard(AssetEntity video) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => VideoPlayerScreen(playlist: [video], initialIndex: 0)));
+  }
+
   Widget _buildBody() {
     switch (_selectedIndex) {
       case 0:
-        return _videos.isEmpty ? _buildEmptyView() : (_isGridView ? _buildVideoGrid() : _buildVideoList());
+        return _buildHomeDashboard();
       case 1:
-        return _buildFolderList();
+        return _videos.isEmpty ? _buildEmptyView() : (_isGridView ? _buildVideoGrid() : _buildVideoList());
       case 2:
         return _buildExploreView();
       case 3:
-        return _buildRecentlyWatched();
+        return _buildFolderList();
       case 4:
-        return const ProfileScreen(); // Profile is now embedded in body
+        return const ProfileScreen();
       default:
         return const SizedBox();
     }
@@ -604,23 +881,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // 🕒 Premium History List
-  Widget _buildRecentlyWatched() {
-    // TODO: Connect to real HistoryService
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.history_toggle_off_rounded, size: 80, color: Colors.white.withValues(alpha: 0.1)),
-          const SizedBox(height: 16),
-          Text('No recent plays', style: GoogleFonts.outfit(color: Colors.white38, fontSize: 16)),
-          const SizedBox(height: 8),
-          Text('Videos you watch will show up here', style: GoogleFonts.outfit(color: Colors.white24, fontSize: 12)),
-        ],
-      ),
-    );
-  }
-
   Widget _buildPermissionView() {
     return Center(
       child: Column(
@@ -643,6 +903,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _openPlayer(int index) {
+    final video = _videos[index];
+    HistoryService.savePosition(video.id, HistoryService.getPosition(video.id)); // Saves as last played
+
     Navigator.push(
       context,
       MaterialPageRoute(

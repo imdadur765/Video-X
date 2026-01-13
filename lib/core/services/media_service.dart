@@ -27,6 +27,20 @@ class MediaService {
     return videos;
   }
 
+  /// Get recently added videos
+  Future<List<AssetEntity>> getRecentlyAdded() async {
+    final PermissionState ps = await PhotoManager.requestPermissionExtend();
+    if (!ps.isAuth && !ps.hasAccess) return [];
+
+    final List<AssetPathEntity> albums = await PhotoManager.getAssetPathList(
+      type: RequestType.video,
+      filterOption: FilterOptionGroup(orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)]),
+    );
+
+    if (albums.isEmpty) return [];
+    return await albums[0].getAssetListRange(start: 0, end: 10);
+  }
+
   /// Get list of video folders
   Future<List<AssetPathEntity>> getVideoFolders() async {
     final PermissionState ps = await PhotoManager.requestPermissionExtend();
